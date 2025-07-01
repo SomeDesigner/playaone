@@ -8,6 +8,9 @@ const COLORS = {
   bass: '#5EEAD4',
   mid: '#8B5CF6',
   treble: '#F97316',
+  accent1: '#F59E0B',
+  accent2: '#EF4444',
+  accent3: '#10B981',
 };
 
 function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
@@ -15,8 +18,9 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
   const containerRef = useRef();
   const shapesRef = useRef([]);
   const animationIdRef = useRef();
-  const [grid, setGrid] = useState({ cols: 16, rows: 16 });
+  const [grid, setGrid] = useState({ cols: 20, rows: 20 });
 
+  // Initialize shapes and handle resize
   useEffect(() => {
     const resize = () => {
       if (!containerRef.current) return;
@@ -24,12 +28,18 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
       const cols = Math.floor(width / TILE_SIZE);
       const rows = Math.floor(height / TILE_SIZE);
       setGrid({ cols, rows });
-
-      // Reassign blob sizes based on screen size with a more conservative scale factor
-      const sizeScale = Math.min(width, height) / 600; // Smaller blobs on small screens
-      shapesRef.current.forEach(shape => {
-        shape.baseSize = (6 + Math.random() * 10) * sizeScale;
-      });
+      // Update existing shapes for new grid size
+      if (shapesRef.current.length > 0) {
+        shapesRef.current.forEach(shape => {
+          // Keep shapes proportionally positioned
+          shape.x = Math.min(shape.x, cols - 1);
+          shape.y = Math.min(shape.y, rows - 1);
+          
+          // Scale shape sizes based on screen size
+          const screenScale = Math.min(width / 800, height / 600); // Relative to ideal size
+          shape.screenScale = Math.max(0.5, Math.min(2, screenScale)); // Clamp between 0.5x and 2x
+        });
+      }
     };
 
     resize();
@@ -37,137 +47,187 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
     return () => window.removeEventListener('resize', resize);
   }, []);
 
+  // Create shapes when grid changes
   useEffect(() => {
-    shapesRef.current = Array.from({ length: 12 }).map((_, i) => ({
-      type: ['circle', 'square', 'triangle', 'hexagon'][i % 4],
-      x: Math.random() * grid.cols,
-      y: Math.random() * grid.rows,
-      dx: (Math.random() - 0.5) * 0.1,
-      dy: (Math.random() - 0.5) * 0.1,
-      baseSize: 6 + Math.random() * 10,
-      band: ['bass', 'mid', 'treble'][i % 3],
-      color: COLORS[['bass', 'mid', 'treble'][i % 3]],
-      offset: Math.random() * 1000,
-    }));
+    const { cols, rows } = grid;
+    if (cols <= 0 || rows <= 0) return;
+
+    // Calculate number of shapes based on screen size
+    const area = cols * rows;
+    const shapeCount = Math.max(6, Math.min(20, Math.floor(area / 100))); // 6-20 shapes based on size
+    
+    const allColors = Object.keys(COLORS);
+
+    shapesRef.current = Array.from({ length: shapeCount }).map((_, i) => {
+      const colorKey = allColors[i % allColors.length];
+      return {
+        type: ['circle', 'square', 'triangle', 'hexagon'][i % 4],
+        x: Math.random() * cols,
+        y: Math.random() * rows,
+        dx: (Math.random() - 0.5) * 0.03, // Slower base movement
+        dy: (Math.random() - 0.5) * 0.03,
+        baseSize: 12 + Math.random() * 15, // Bigger base sizes
+        maxSize: 25 + Math.random() * 20,   // Even bigger max sizes
+        band: ['bass', 'mid', 'treble'][i % 3],
+        color: COLORS[colorKey],
+        offset: Math.random() * 1000,
+        energy: 0,
+        targetEnergy: 0,
+        screenScale: 1, // Will be set by resize
+        intensity: 0.5 + Math.random() * 0.5, // Random intensity multiplier
+      };
+    });
+    console.log('Created', shapesRef.current.length, 'shapes for grid', cols, 'x', rows);
   }, [grid]);
 
+  // Main animation loop - always runs
   useEffect(() => {
-    if (!audioCtx || !analyser) return;
-
     const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    
     const ctx = canvas.getContext('2d');
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let frameCount = 0;
+
+    console.log('Starting visualizer animation');
 
     const draw = () => {
       animationIdRef.current = requestAnimationFrame(draw);
-      
-      // Get real audio data if available, otherwise generate fake data
-      if (analyser) {
-        analyser.getByteFrequencyData(dataArray);
-      } else {
-        // Generate subtle fake audio data for ambient animation
-        const t = performance.now() / 1000;
-        for (let i = 0; i < dataArray.length; i++) {
-          dataArray[i] = Math.sin(t * 0.5 + i * 0.1) * 20 + 30 + Math.random() * 10;
-        }
-      }
+      frameCount++;
 
       const { cols, rows } = grid;
+      if (cols <= 0 || rows <= 0) return;
+
       const CANVAS_WIDTH = cols * TILE_SIZE;
       const CANVAS_HEIGHT = rows * TILE_SIZE;
-      canvas.width = CANVAS_WIDTH;
-      canvas.height = CANVAS_HEIGHT;
+      
+      // Set canvas size
+      if (canvas.width !== CANVAS_WIDTH || canvas.height !== CANVAS_HEIGHT) {
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+      }
 
-      const bass = getEnergy(dataArray, 0, 40);
-      const mid = getEnergy(dataArray, 40, 100);
-      const treble = getEnergy(dataArray, 100, 256);
+      let bass = 50, mid = 50, treble = 50; // Default values for gentle animation
+
+      // Get real audio data if available
+      if (analyser && isPlaying) {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        
+        bass = getEnergy(dataArray, 0, 40);
+        mid = getEnergy(dataArray, 40, 100);
+        treble = getEnergy(dataArray, 100, Math.min(256, dataArray.length));
+
+        // Debug occasionally
+        if (frameCount % 120 === 0) {
+          const sum = dataArray.reduce((a, b) => a + b, 0);
+          console.log(`Frame ${frameCount}: Audio data sum=${sum}, bass=${bass.toFixed(1)}, mid=${mid.toFixed(1)}, treble=${treble.toFixed(1)}`);
+        }
+      } else {
+        // Generate gentle fake data for ambient animation
+        const t = performance.now() / 3000;
+        bass = 40 + Math.sin(t) * 15 + Math.random() * 10;
+        mid = 35 + Math.sin(t * 1.3) * 12 + Math.random() * 8;
+        treble = 30 + Math.sin(t * 1.7) * 10 + Math.random() * 6;
+      }
+
       const energyMap = { bass, mid, treble };
 
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.12)';
+      // Clear canvas with fade effect
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.15)';
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
       const t = performance.now() / 1000;
 
-      shapesRef.current.forEach(shape => {
-        const energy = energyMap[shape.band] / 255;
-        // Slow movement when no audio, faster when playing
-        const baseSpeed = analyser && isPlaying ? 0.05 + energy * 0.5 : 0.02;
-        const speed = baseSpeed;
+      // Update shapes
+      shapesRef.current.forEach((shape, index) => {
+        // Get energy for this shape's frequency band
+        const targetEnergy = energyMap[shape.band] / 255;
         
-        shape.x += shape.dx * speed * 10;
-        shape.y += shape.dy * speed * 10;
+        // Smooth energy transitions
+        shape.energy += (targetEnergy - shape.energy) * 0.1;
+        
+        // Movement speed based on energy and playing state
+        const energyMultiplier = isPlaying ? (0.3 + shape.energy * 1.5) : 0.3;
+        const speed = energyMultiplier;
+        
+        shape.x += shape.dx * speed;
+        shape.y += shape.dy * speed;
 
         // Bounce off edges
-        if (shape.x < 0 || shape.x > cols) shape.dx *= -1;
-        if (shape.y < 0 || shape.y > rows) shape.dy *= -1;
-
-        // Size based on energy (or subtle pulsing if no audio)
-        if (analyser) {
-          shape.dynamicSize = shape.baseSize * (0.5 + energy * 1.5);
-        } else {
-          // Gentle pulsing without audio
-          shape.dynamicSize = shape.baseSize * (0.8 + Math.sin(t + shape.offset) * 0.2);
+        if (shape.x <= 0 || shape.x >= cols) {
+          shape.dx *= -1;
+          shape.x = Math.max(0, Math.min(cols, shape.x));
         }
+        if (shape.y <= 0 || shape.y >= rows) {
+          shape.dy *= -1;
+          shape.y = Math.max(0, Math.min(rows, shape.y));
+        }
+
+        // Dynamic size based on energy
+        const baseSizeMultiplier = isPlaying ? (0.6 + shape.energy * 1.4) : (0.8 + Math.sin(t * 0.5 + shape.offset) * 0.2);
+        shape.dynamicSize = shape.baseSize * baseSizeMultiplier;
       });
 
+      // Draw grid tiles
       for (let gy = 0; gy < rows; gy++) {
         for (let gx = 0; gx < cols; gx++) {
-          let r = 0, g = 0, b = 0;
-          let alpha = 0.05;
+          let r = 0, g = 0, b = 0, alpha = 0;
 
+          // Calculate influence from each shape
           shapesRef.current.forEach(shape => {
             const dx = shape.x - gx;
             const dy = shape.y - gy;
-            const distSq = dx * dx + dy * dy;
-            const dist = Math.sqrt(distSq);
+            const distance = Math.sqrt(dx * dx + dy * dy);
 
-            const energy = energyMap[shape.band] / 255;
-            const pulse = Math.sin(t * 2 + shape.offset) * 0.5 + 1;
-            const radius = shape.dynamicSize * 1.5 + pulse * energy * 10;
+            // Pulsing effect
+            const pulse = Math.sin(t * 3 + shape.offset) * 0.3 + 0.7;
+            const radius = shape.dynamicSize * 2 * pulse;
 
-            const influence = Math.max(0, 1 - Math.pow(dist / radius, 0.7));
-            const brightnessBoost = Math.max(0, 1 - distSq / (radius * radius));
-            
-            const [cr, cg, cb] = hexToRgb(shape.color);
-            const intensityMultiplier = analyser ? 1 : 0.4;
-            // Apply influence and brightness boost
-            r += (cr * influence * influence + 255 * brightnessBoost * 0.3);
-            g += (cg * influence * influence + 255 * brightnessBoost * 0.3);
-            b += (cb * influence * influence + 255 * brightnessBoost * 0.3);
-            alpha += (influence * 0.3 + brightnessBoost * 0.1) * intensityMultiplier;
+            if (distance < radius) {
+              const influence = Math.max(0, 1 - Math.pow(distance / radius, 0.8));
+              const brightness = influence * influence;
 
-            shapesRef.current.forEach(other => {
-              if (other === shape) return;
-              const dx2 = shape.x - other.x;
-              const dy2 = shape.y - other.y;
-              const close = dx2 * dx2 + dy2 * dy2 < 4;
-              if (close) {
-                const [or, og, ob] = hexToRgb(other.color);
-                r = mix(r, or, 0.1);
-                g = mix(g, og, 0.1);
-                b = mix(b, ob, 0.1);
-              }
-            });
+              const [cr, cg, cb] = hexToRgb(shape.color);
+              
+              // Add color with energy-based intensity
+              const intensity = isPlaying ? (0.4 + shape.energy * 0.8) : 0.3;
+              r += cr * brightness * intensity;
+              g += cg * brightness * intensity;
+              b += cb * brightness * intensity;
+              alpha += brightness * intensity * 0.4;
+            }
           });
 
+          // Clamp values
           r = Math.min(255, r);
           g = Math.min(255, g);
           b = Math.min(255, b);
-          alpha = Math.min(1, alpha);
+          alpha = Math.min(0.9, alpha);
 
-          ctx.fillStyle = `rgba(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)},${alpha})`;
-          ctx.fillRect(
-            gx * TILE_SIZE + TILE_MARGIN,
-            gy * TILE_SIZE + TILE_MARGIN,
-            VISIBLE_SIZE,
-            VISIBLE_SIZE
-          );
+          if (alpha > 0.01) {
+            ctx.fillStyle = `rgba(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)}, ${alpha})`;
+            ctx.fillRect(
+              gx * TILE_SIZE + TILE_MARGIN,
+              gy * TILE_SIZE + TILE_MARGIN,
+              VISIBLE_SIZE,
+              VISIBLE_SIZE
+            );
+          }
         }
+      }
+
+      // Debug overlay
+      if (frameCount % 60 === 0) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = '12px monospace';
+        ctx.fillText(`Audio: ${analyser ? '✓' : '✗'} | Playing: ${isPlaying ? '✓' : '✗'}`, 10, 20);
+        ctx.fillText(`Bass: ${bass.toFixed(0)} Mid: ${mid.toFixed(0)} Treble: ${treble.toFixed(0)}`, 10, 35);
       }
     };
 
     draw();
-    // Cleanup animation on unmount
+
     return () => {
       if (animationIdRef.current) {
         cancelAnimationFrame(animationIdRef.current);
@@ -178,11 +238,22 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}
+      style={{ 
+        width: '100%', 
+        height: '100%', 
+        overflow: 'hidden', 
+        position: 'relative',
+        backgroundColor: '#0F172A'
+      }}
     >
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', width: '100%', height: '100%', imageRendering: 'pixelated', backgroundColor: '#0F172A' }}
+        style={{ 
+          display: 'block', 
+          width: '100%', 
+          height: '100%', 
+          imageRendering: 'pixelated'
+        }}
       />
     </div>
   );
@@ -190,17 +261,16 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
 
 function getEnergy(dataArray, start, end) {
   let sum = 0;
-  for (let i = start; i < end; i++) sum += dataArray[i];
-  return sum / (end - start);
+  const actualEnd = Math.min(end, dataArray.length);
+  for (let i = start; i < actualEnd; i++) {
+    sum += dataArray[i];
+  }
+  return sum / (actualEnd - start);
 }
 
 function hexToRgb(hex) {
   const bigint = parseInt(hex.slice(1), 16);
   return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
-}
-
-function mix(a, b, f) {
-  return a * (1 - f) + b * f;
 }
 
 export default VisualizerGrid;

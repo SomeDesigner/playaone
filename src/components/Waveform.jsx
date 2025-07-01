@@ -4,165 +4,156 @@ import WaveSurfer from 'wavesurfer.js';
 const Waveform = forwardRef(({ audioUrl, onReady }, ref) => {
   const containerRef = useRef();
   const waveSurferRef = useRef();
-  const isConnectedRef = useRef(false); // Prevent multiple connections
+  const isConnectedRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     play: () => waveSurferRef.current?.play(),
     pause: () => waveSurferRef.current?.pause(),
-    isPlaying: () => waveSurferRef.current?.isPlaying(),
-    getCurrentTime: () => waveSurferRef.current?.getCurrentTime(),
-    seekTo: (time) => waveSurferRef.current?.seekTo(time / waveSurferRef.current.getDuration()),
-    getDuration: () => waveSurferRef.current?.getDuration(),
+    isPlaying: () => waveSurferRef.current?.isPlaying() || false,
+    getCurrentTime: () => waveSurferRef.current?.getCurrentTime() || 0,
+    seekTo: (time) => {
+      const duration = waveSurferRef.current?.getDuration();
+      if (duration) {
+        waveSurferRef.current?.seekTo(time / duration);
+      }
+    },
+    getDuration: () => waveSurferRef.current?.getDuration() || 0,
   }));
 
   useEffect(() => {
     if (!audioUrl || !containerRef.current) return;
 
-    // Reset connection flag when new audio loads
+    // Reset connection flag
     isConnectedRef.current = false;
 
+    // Cleanup previous instance
     if (waveSurferRef.current) {
       waveSurferRef.current.destroy();
+      waveSurferRef.current = null;
     }
 
-    waveSurferRef.current = WaveSurfer.create({
-      container: containerRef.current,
-      waveColor: '#94a3b8',
-      progressColor: '#8B5CF6',
-      cursorColor: '#F97316',
-      barWidth: 2,
-      barRadius: 2,
-      height: 48,
-      responsive: true,
-      normalize: true,
-      cursorWidth: 2,
-    });
+    console.log('Creating new WaveSurfer instance for:', audioUrl);
 
-    waveSurferRef.current.load(audioUrl);
+    try {
+      waveSurferRef.current = WaveSurfer.create({
+        container: containerRef.current,
+        waveColor: '#94a3b8',
+        progressColor: '#8B5CF6',
+        cursorColor: '#F97316',
+        barWidth: 2,
+        barRadius: 2,
+        height: 48,
+        responsive: true,
+        normalize: true,
+        cursorWidth: 2,
+      });
 
-    const setupAudioAnalysis = () => {
-      if (isConnectedRef.current) return; // Prevent multiple setups
-      if (!waveSurferRef.current) return; // Make sure WaveSurfer exists
+      waveSurferRef.current.load(audioUrl);
 
-      try {
-        const backend = waveSurferRef.current.backend;
-        
-        // Check if backend exists and has the properties we need
-        if (!backend) {
-          console.log('Backend not available yet');
-          return;
-        }
+      const setupAudioAnalysis = () => {
+        if (isConnectedRef.current || !waveSurferRef.current) return;
 
-        console.log('Backend available, properties:', Object.keys(backend));
-        
-        let ctx = backend.ac || backend.audioContext || backend.context;
-        
-        if (!ctx) {
-          console.log('No audio context found in backend, trying alternative approaches');
+        try {
+          console.log('Attempting to setup audio analysis...');
           
-          // Try to get audio context from WaveSurfer instance directly
-          if (waveSurferRef.current.getAudioContext) {
-            ctx = waveSurferRef.current.getAudioContext();
+          const ws = waveSurferRef.current;
+          let ctx = null;
+          let sourceNode = null;
+
+          // Method 1: Try to get from backend
+          if (ws.backend) {
+            console.log('Found backend, properties:', Object.keys(ws.backend));
+            ctx = ws.backend.ac || ws.backend.audioContext;
+            sourceNode = ws.backend.gainNode || ws.backend.source;
           }
-          
-          // Last resort: try the media element approach
-          if (!ctx && waveSurferRef.current.media) {
+
+          // Method 2: Try direct access
+          if (!ctx && ws.getAudioContext) {
+            ctx = ws.getAudioContext();
+          }
+
+          // Method 3: Create from media element
+          if (!ctx && ws.media) {
+            console.log('Creating audio context from media element');
             ctx = new (window.AudioContext || window.webkitAudioContext)();
-            console.log('Created new audio context');
+            sourceNode = ctx.createMediaElementSource(ws.media);
+            // Connect to destination so audio still plays
+            sourceNode.connect(ctx.destination);
           }
-        }
 
-        if (!ctx) {
-          console.log('Still no audio context available');
-          return;
-        }
-
-        console.log('Audio context found:', ctx);
-
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.8;
-
-        // Try to connect to audio source
-        let connected = false;
-
-        // Method 1: gainNode
-        if (backend.gainNode) {
-          try {
-            backend.gainNode.connect(analyser);
-            connected = true;
-            console.log('Connected via gainNode');
-          } catch (e) {
-            console.log('gainNode connection failed:', e.message);
+          if (!ctx) {
+            console.log('Could not obtain audio context');
+            return;
           }
-        }
 
-        // Method 2: source node
-        if (!connected && backend.source) {
-          try {
-            backend.source.connect(analyser);
-            connected = true;
-            console.log('Connected via source');
-          } catch (e) {
-            console.log('source connection failed:', e.message);
+          console.log('Audio context obtained:', ctx.state);
+
+          // Create and configure analyser
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          analyser.smoothingTimeConstant = 0.8;
+
+          // Connect source to analyser
+          if (sourceNode) {
+            try {
+              sourceNode.connect(analyser);
+              console.log('Successfully connected source to analyser');
+              
+              // Test the connection
+              setTimeout(() => {
+                const testData = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(testData);
+                const sum = testData.reduce((a, b) => a + b, 0);
+                console.log('Audio analysis test - data sum:', sum, 'bins:', analyser.frequencyBinCount);
+              }, 500);
+              
+              isConnectedRef.current = true;
+              
+              if (onReady) {
+                onReady({ ctx, analyser });
+              }
+            } catch (connectError) {
+              console.error('Failed to connect nodes:', connectError);
+            }
+          } else {
+            console.log('No source node available');
           }
-        }
 
-        // Method 3: media element source (fallback)
-        if (!connected && waveSurferRef.current.media) {
-          try {
-            const mediaSource = ctx.createMediaElementSource(waveSurferRef.current.media);
-            mediaSource.connect(analyser);
-            mediaSource.connect(ctx.destination); // Keep audio playing
-            connected = true;
-            console.log('Connected via media element source');
-          } catch (e) {
-            console.log('media element source connection failed:', e.message);
-          }
+        } catch (error) {
+          console.error('Error in setupAudioAnalysis:', error);
         }
+      };
 
-        if (connected) {
-          isConnectedRef.current = true;
-          console.log('Audio analysis connected successfully');
-          
-          // Test the analyser
-          const testData = new Uint8Array(analyser.frequencyBinCount);
-          analyser.getByteFrequencyData(testData);
-          console.log('Analyser test - frequency bins:', analyser.frequencyBinCount);
-          
-          if (onReady) {
-            onReady({ ctx, analyser });
-          }
-        } else {
-          console.log('Could not connect to any audio source');
-        }
-      } catch (error) {
-        console.error('Error setting up audio analysis:', error);
-        console.error('Error details:', error.message);
-      }
-    };
+      // Try setup when ready
+      waveSurferRef.current.on('ready', () => {
+        console.log('WaveSurfer ready');
+        setTimeout(setupAudioAnalysis, 100);
+      });
 
-    // Try to connect when ready
-    waveSurferRef.current.on('ready', () => {
-      console.log('WaveSurfer ready event fired');
-      // Give it a moment for everything to initialize
-      setTimeout(setupAudioAnalysis, 100);
-    });
-    
-    // Also try when playing starts (audio context might not be ready until user interaction)
-    waveSurferRef.current.on('play', () => {
-      console.log('WaveSurfer play event fired');
-      // Try multiple times with increasing delays
-      setTimeout(setupAudioAnalysis, 100);
-      setTimeout(setupAudioAnalysis, 500);
-      setTimeout(setupAudioAnalysis, 1000);
-    });
+      // Try setup when playing (important for audio context activation)
+      waveSurferRef.current.on('play', () => {
+        console.log('WaveSurfer started playing');
+        setTimeout(setupAudioAnalysis, 200);
+        setTimeout(setupAudioAnalysis, 1000); // Retry after 1 second
+      });
+
+      // Add error handling
+      waveSurferRef.current.on('error', (error) => {
+        console.error('WaveSurfer error:', error);
+      });
+
+    } catch (error) {
+      console.error('Error creating WaveSurfer:', error);
+    }
 
     return () => {
       isConnectedRef.current = false;
-      waveSurferRef.current?.destroy();
+      if (waveSurferRef.current) {
+        waveSurferRef.current.destroy();
+        waveSurferRef.current = null;
+      }
     };
-  }, [audioUrl]); // Remove onReady from dependencies to prevent re-renders
+  }, [audioUrl]);
 
   return (
     <div
@@ -170,13 +161,14 @@ const Waveform = forwardRef(({ audioUrl, onReady }, ref) => {
       style={{
         width: '100%',
         height: '48px',
-        overflow: 'hidden',
+        backgroundColor: '#1E293B',
         borderRadius: '0',
-        backgroundColor: '#F8F8F8',
         padding: '8px',
       }}
     />
   );
 });
+
+Waveform.displayName = 'Waveform';
 
 export default Waveform;
