@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from 'react';
 
 const TILE_SIZE = 16;
 const TILE_MARGIN = 2;
-const VISIBLE_SIZE = TILE_SIZE - TILE_MARGIN * 2;
+const VISIBLE_SIZE = TILE_SIZE - TILE_MARGIN * 1;
 
 const COLORS = {
   bass: '#5EEAD4',
