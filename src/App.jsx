@@ -4,6 +4,7 @@ import VisualizerGrid from './components/VisualizerGrid';
 import Waveform from './components/Waveform';
 import TopBar from './components/TopBar';
 import Footer from './components/Footer';
+import PlaylistSidebar from './components/PlaylistSidebar';
 
 function App() {
   const waveformRef = useRef();
@@ -272,6 +273,8 @@ function App() {
         activeView={activeView}
         theme={theme}
       />
+
+      <PlaylistSidebar isOpen={playlistOpen} onClose={() => setPlaylistOpen(false)}/>
 
       {renderMainContent()}
       

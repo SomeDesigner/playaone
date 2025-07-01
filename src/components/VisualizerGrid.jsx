@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from 'react';
 
 const TILE_SIZE = 16;
 const TILE_MARGIN = 2;
-const VISIBLE_SIZE = TILE_SIZE - TILE_MARGIN * 1;
+const VISIBLE_SIZE = TILE_SIZE - TILE_MARGIN * 0;
 
 const COLORS = {
   bass: '#5EEAD4',
@@ -420,15 +420,15 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
       }
 
       // Debug overlay with tempo info
-      if (frameCount % 60 === 0) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        ctx.font = '12px monospace';
-        ctx.fillText(`Audio: ${analyser ? '✓' : '✗'} | Playing: ${isPlaying ? '✓' : '✗'}`, 10, 20);
-        if (isPlaying && analyser) {
-          ctx.fillText(`BPM: ${detection.bpm.toFixed(0)} | Beat: ${detection.beatStrength.toFixed(2)}`, 10, 35);
-          ctx.fillText(`K:${detection.kickDetected ? '●' : '○'} S:${detection.snareDetected ? '●' : '○'} H:${detection.hihatDetected ? '●' : '○'}`, 10, 50);
-        }
-      }
+      // if (frameCount % 60 === 0) {
+      //   ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      //   ctx.font = '12px monospace';
+      //   ctx.fillText(`Audio: ${analyser ? '✓' : '✗'} | Playing: ${isPlaying ? '✓' : '✗'}`, 10, 20);
+      //   if (isPlaying && analyser) {
+      //     ctx.fillText(`BPM: ${detection.bpm.toFixed(0)} | Beat: ${detection.beatStrength.toFixed(2)}`, 10, 35);
+      //     ctx.fillText(`K:${detection.kickDetected ? '●' : '○'} S:${detection.snareDetected ? '●' : '○'} H:${detection.hihatDetected ? '●' : '○'}`, 10, 50);
+      //   }
+      // }
     };
 
     draw();
@@ -448,7 +448,8 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
         height: '100%', 
         overflow: 'hidden', 
         position: 'relative',
-        backgroundColor: '#0F172A'
+        backgroundColor: '#ffffff',
+        border: 'none'
       }}
     >
       <canvas
@@ -457,7 +458,7 @@ function VisualizerGrid({ audioCtx, analyser, isPlaying }) {
           display: 'block', 
           width: '100%', 
           height: '100%', 
-          imageRendering: 'pixelated'
+          imageRendering: 'pixelated',
         }}
       />
     </div>
